@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
+.env.*
+
+# Jupyter
+.ipynb_checkpoints/
+# OS
+.DS_Store
