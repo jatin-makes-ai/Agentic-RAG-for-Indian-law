@@ -1,2 +1,4 @@
 pdfplumber
 python-dotenv
+tiktoken
+tqdm
