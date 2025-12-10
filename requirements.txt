@@ -2,3 +2,5 @@ pdfplumber
 python-dotenv
 tiktoken
 tqdm
+faiss-cpu
+openai
