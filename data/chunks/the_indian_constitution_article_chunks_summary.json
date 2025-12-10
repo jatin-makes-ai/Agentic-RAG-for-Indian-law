@@ -1,0 +1,11 @@
+{
+  "doc_id": "the_indian_constitution",
+  "input_chars": 859642,
+  "num_articles_detected": 272,
+  "num_chunks": 496,
+  "target_tokens": 512,
+  "overlap_tokens": 64,
+  "min_tokens": 48,
+  "start_page": 32,
+  "end_page": null
+}
