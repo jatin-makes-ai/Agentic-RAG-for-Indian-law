@@ -1,1 +1,1 @@
-An Agentic RAG system for asking questions about Indian Law
+An Agentic RAG system for quering about the Indian Law
