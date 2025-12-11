@@ -4,3 +4,5 @@ tiktoken
 tqdm
 faiss-cpu
 openai
+gradio
+numpy
