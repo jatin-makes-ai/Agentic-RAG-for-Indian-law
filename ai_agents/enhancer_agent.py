@@ -11,6 +11,7 @@ def get_weather(city: str) -> str:
 prompt = """
 You are an assistant to a famous professional legal advisor.
 Your task is to take the user's query and enhance it to make it easier to be looked up in the Indian Constitution.
+You must only return the enhanced query, no other text or explanation.
 """
 
 enhancer_agent = Agent(
