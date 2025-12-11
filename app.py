@@ -6,20 +6,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import gradio as gr
-from openai import OpenAI
-from agents.conversation_agent import build_messages
-
+from agents import Runner, trace
+from ai_agents.enhancer_agent import enhancer_agent
+from ai_agents.conversation_agent import conversation_agent
 from scripts.retriever import Retriever
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-CONV_MODEL = os.getenv("CONVERSATION_LLM_MODEL", "gpt-4o-mini")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-large")
-
-client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else OpenAI()
-
-EMB_JSONL = os.getenv("EMB_JSONL", "data/embeddings/constitution_embeddings.jsonl")
-FAISS_INDEX = os.getenv("FAISS_INDEX", "data/embeddings/constitution.faiss")
-FAISS_IDMAP = os.getenv("FAISS_IDMAP", "data/embeddings/constitution.idmap.jsonl")
+EMB_JSONL = os.getenv("EMB_JSONL", "data/embeddings/the_indian_constitution_embeddings.jsonl")
+FAISS_INDEX = os.getenv("FAISS_INDEX", "data/embeddings/the_indian_constitution.faiss")
+FAISS_IDMAP = os.getenv("FAISS_IDMAP", "data/embeddings/the_indian_constitution.idmap.jsonl")
 
 retriever = Retriever(
     embeddings_jsonl=EMB_JSONL,
@@ -28,13 +22,67 @@ retriever = Retriever(
     use_faiss=True
 )
 
+def format_context(retrieved_chunks, max_context_chars=4000):
+    """Format retrieved chunks into context string."""
+    pieces = []
+    total = 0
+    for c in retrieved_chunks:
+        txt = c.get("text", "") or ""
+        meta = c.get("metadata", {}) or {}
+        header = f"CHUNK_ID: {c.get('chunk_id')} METADATA: {meta}"
+        part = header + "\n" + txt + "\n\n"
+        if total + len(part) > max_context_chars:
+            # truncate remaining
+            remain = max(0, max_context_chars - total)
+            part = part[:remain]
+            pieces.append(part)
+            break
+        pieces.append(part)
+        total += len(part)
+    return "\n---\n".join(pieces)
+
 def answer_query(user_query, top_k=5):
-    retrieved = retriever.retrieve(user_query, top_k=top_k)
-    messages = build_messages(user_query, retrieved)
-    # call chat completion
-    resp = client.chat.completions.create(model=CONV_MODEL, messages=messages, temperature=0.0, max_tokens=512)
-    answer = resp.choices[0].message.content
-    # prepare simple sources list
+    # Step 1: Enhance the query using enhancer agent
+    try:
+        enhanced_query_result = Runner.run_sync(enhancer_agent, user_query)
+        # Try different possible return formats
+        if hasattr(enhanced_query_result, 'final_output'):
+            enhanced_query = enhanced_query_result.final_output
+        elif hasattr(enhanced_query_result, 'messages') and enhanced_query_result.messages:
+            enhanced_query = enhanced_query_result.messages[-1].content
+        else:
+            enhanced_query = str(enhanced_query_result) if enhanced_query_result else user_query
+    except Exception as e:
+        # Fallback to original query if enhancement fails
+        print(f"Warning: Query enhancement failed: {e}")
+        enhanced_query = user_query
+    
+    # Step 2: Retrieve relevant chunks using the enhanced query
+    retrieved = retriever.retrieve(enhanced_query, top_k=top_k)
+    
+    # Step 3: Format context from retrieved chunks
+    context = format_context(retrieved)
+    
+    # Step 4: Generate answer using conversation agent
+    conversation_prompt = (
+        f"Use only the following retrieved chunks to answer. "
+        f"Cite chunk ids in your answer when you reference them.\n\n"
+        f"RETRIEVED_CHUNKS:\n{context}\n\nQUESTION: {user_query}"
+    )
+    try:
+        answer_result = Runner.run_sync(conversation_agent, conversation_prompt)
+        # Try different possible return formats
+        if hasattr(answer_result, 'final_output'):
+            answer = answer_result.final_output
+        elif hasattr(answer_result, 'messages') and answer_result.messages:
+            answer = answer_result.messages[-1].content
+        else:
+            answer = str(answer_result) if answer_result else "I don't know."
+    except Exception as e:
+        print(f"Warning: Answer generation failed: {e}")
+        answer = "I don't know."
+    
+    # Prepare simple sources list
     sources = [{"chunk_id": r["chunk_id"], "score": r["score"], "metadata": r.get("metadata")} for r in retrieved]
     return answer, json.dumps(sources, ensure_ascii=False, indent=2)
 

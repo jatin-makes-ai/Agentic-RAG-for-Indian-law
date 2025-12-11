@@ -6,3 +6,4 @@ faiss-cpu
 openai
 gradio
 numpy
+openai-agents
