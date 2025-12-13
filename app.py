@@ -11,6 +11,7 @@ from agents import Runner, trace
 from ai_agents.enhancer_agent import enhancer_agent
 from ai_agents.conversation_agent import conversation_agent
 from ai_agents.retrieve_checker_agent import retrieve_checker_agent, RetrieveCheckerResponse
+from ai_agents.evaluator_agent import evaluator_agent, EvaluatorResponse
 from scripts.retriever import Retriever
 
 EMB_JSONL = os.getenv("EMB_JSONL", "data/embeddings/the_indian_constitution_embeddings.jsonl")
@@ -82,106 +83,190 @@ def check_retrieved_chunks(user_query, retrieved_chunks):
         f"Evaluate these chunks and output JSON with sufficiency, correctness, and feedback fields."
     )
     
-    with trace(trace_name):
-        checker_result = Runner.run_sync(retrieve_checker_agent, checker_prompt)
-        # Extract Pydantic model directly
-        checker_response = extract_structured_output(checker_result, RetrieveCheckerResponse)
-        
-        # Fallback if extraction fails
-        if checker_response is None:
-            print("Warning: Failed to extract structured output from checker, using defaults")
-            return RetrieveCheckerResponse(
-                sufficiency=False,
-                correctness=False,
-                feedback="Failed to extract checker response"
-            )
-        
-        return checker_response
+    checker_result = Runner.run_sync(retrieve_checker_agent, checker_prompt)
+    # Extract Pydantic model directly
+    checker_response = extract_structured_output(checker_result, RetrieveCheckerResponse)
+    
+    # Fallback if extraction fails
+    if checker_response is None:
+        print("Warning: Failed to extract structured output from checker, using defaults")
+        return RetrieveCheckerResponse(
+            sufficiency=False,
+            correctness=False,
+            feedback="Failed to extract checker response"
+        )
+    
+    return checker_response
+
+def evaluate_response(user_query, answer, retrieved_chunks):
+    """Evaluate the conversation agent's response using the evaluator agent."""
+    context = format_context(retrieved_chunks, max_context_chars=2000)  # Smaller context for evaluation
+    evaluator_prompt = (
+        f"USER_QUERY: {user_query}\n\n"
+        f"RETRIEVED_CHUNKS:\n{context}\n\n"
+        f"AGENT_RESPONSE:\n{answer}\n\n"
+        f"Evaluate the agent's response for acceptability, completeness, accuracy, and proper citation."
+    )
+    
+    evaluator_result = Runner.run_sync(evaluator_agent, evaluator_prompt)
+    # Extract Pydantic model directly
+    evaluator_response = extract_structured_output(evaluator_result, EvaluatorResponse)
+    
+    # Fallback if extraction fails
+    if evaluator_response is None:
+        print("Warning: Failed to extract structured output from evaluator, using defaults")
+        return EvaluatorResponse(
+            is_acceptable=False,
+            completeness=False,
+            accuracy=False,
+            proper_citation=False,
+            feedback="Failed to extract evaluator response"
+        )
+    
+    return evaluator_response
 
 def answer_query(user_query, top_k=5):
-    """Answer query with retry loop: enhancer → retriever → checker → (retry if needed)."""
-    original_query = user_query
-    enhanced_query = user_query
-    retrieved = []
-    feedback = ""
-    checker_response = None
-    
-    # Retry loop: enhance → retrieve → check
-    for attempt in range(MAX_RETRIEVAL_TRIES):
-        # Step 1: Enhance the query (with feedback if retrying)
-        try:
-            with trace(trace_name):
-                if attempt == 0:
+    """
+    Answer query with complete workflow in a single trace:
+    1. Retrieval loop: enhancer → retriever → checker → (retry if needed)
+    2. Answer generation: conversation agent
+    3. Evaluation loop: evaluator → (retry conversation if needed)
+    """
+    # Wrap entire workflow in a single trace
+    with trace(trace_name):
+        original_query = user_query
+        enhanced_query = user_query
+        retrieved = []
+        retrieval_feedback = ""
+        checker_response = None
+        evaluator_response = None
+        
+        # ===== PHASE 1: RETRIEVAL LOOP =====
+        # Retry loop: enhance → retrieve → check
+        for retrieval_attempt in range(MAX_RETRIEVAL_TRIES):
+            # Step 1: Enhance the query (with feedback if retrying)
+            try:
+                if retrieval_attempt == 0:
                     # First attempt: enhance original query
                     enhancer_input = original_query
                 else:
                     # Retry: enhance with feedback
-                    enhancer_input = f"Original query: {original_query}\n\nFeedback from previous retrieval: {feedback}\n\nPlease enhance the query based on this feedback."
+                    enhancer_input = (
+                        f"Original query: {original_query}\n\n"
+                        f"Feedback from previous retrieval: {retrieval_feedback}\n\n"
+                        f"Please enhance the query based on this feedback."
+                    )
                 
                 enhanced_query_result = Runner.run_sync(enhancer_agent, enhancer_input)
                 enhanced_query = extract_agent_response(enhanced_query_result)
-        except Exception as e:
-            print(f"Warning: Query enhancement failed: {e}")
-            if attempt == 0:
-                enhanced_query = original_query
-            # Continue with previous enhanced_query if retry fails
-        
-        # Step 2: Retrieve relevant chunks
-        retrieved = retriever.retrieve(enhanced_query, top_k=top_k)
-        
-        # Step 3: Check retrieved chunks
-        checker_response = check_retrieved_chunks(original_query, retrieved)
-        
-        # Step 4: Check if we should retry
-        if checker_response.sufficiency and checker_response.correctness:
-            # Both flags are true, proceed to answer generation
-            break
-        else:
-            # Flags are false, prepare feedback for retry
-            feedback = checker_response.feedback or "Retrieved chunks are insufficient or incorrect."
-            if attempt < MAX_RETRIEVAL_TRIES - 1:
-                print(f"Retrieval attempt {attempt + 1} failed. Retrying with feedback: {feedback}")
+            except Exception as e:
+                print(f"Warning: Query enhancement failed: {e}")
+                if retrieval_attempt == 0:
+                    enhanced_query = original_query
+                # Continue with previous enhanced_query if retry fails
+            
+            # Step 2: Retrieve relevant chunks
+            retrieved = retriever.retrieve(enhanced_query, top_k=top_k)
+            
+            # Step 3: Check retrieved chunks
+            checker_response = check_retrieved_chunks(original_query, retrieved)
+            
+            # Step 4: Check if we should retry retrieval
+            if checker_response.sufficiency and checker_response.correctness:
+                # Both flags are true, proceed to answer generation
+                break
             else:
-                print(f"Max retrieval tries ({MAX_RETRIEVAL_TRIES}) reached. Proceeding with current chunks.")
-    
-    # Step 5: Generate answer using conversation agent
-    context = format_context(retrieved)
-    conversation_prompt = (
-        f"Use only the following retrieved chunks to answer. "
-        f"Cite chunk ids in your answer when you reference them.\n\n"
-        f"RETRIEVED_CHUNKS:\n{context}\n\nQUESTION: {original_query}"
-    )
-    try:
-        with trace(trace_name):
-            answer_result = Runner.run_sync(conversation_agent, conversation_prompt)
-            answer = extract_agent_response(answer_result)
-            if not answer:
+                # Flags are false, prepare feedback for retry
+                retrieval_feedback = checker_response.feedback or "Retrieved chunks are insufficient or incorrect."
+                if retrieval_attempt < MAX_RETRIEVAL_TRIES - 1:
+                    print(f"Retrieval attempt {retrieval_attempt + 1} failed. Retrying with feedback: {retrieval_feedback}")
+                else:
+                    print(f"Max retrieval tries ({MAX_RETRIEVAL_TRIES}) reached. Proceeding with current chunks.")
+        
+        # Ensure checker_response is available
+        if checker_response is None:
+            checker_response = RetrieveCheckerResponse(
+                sufficiency=False,
+                correctness=False,
+                feedback="Checker response not available"
+            )
+        
+        # ===== PHASE 2: ANSWER GENERATION WITH EVALUATION LOOP =====
+        context = format_context(retrieved)
+        answer = None
+        answer_feedback = ""
+        
+        for answer_attempt in range(MAX_RETRIEVAL_TRIES):
+            # Step 5: Generate answer using conversation agent
+            try:
+                if answer_attempt == 0:
+                    # First attempt: generate answer
+                    conversation_prompt = (
+                        f"Use only the following retrieved chunks to answer. "
+                        f"Cite chunk ids in your answer when you reference them.\n\n"
+                        f"RETRIEVED_CHUNKS:\n{context}\n\nQUESTION: {original_query}"
+                    )
+                else:
+                    # Retry: generate answer with feedback
+                    conversation_prompt = (
+                        f"Use only the following retrieved chunks to answer. "
+                        f"Cite chunk ids in your answer when you reference them.\n\n"
+                        f"RETRIEVED_CHUNKS:\n{context}\n\n"
+                        f"QUESTION: {original_query}\n\n"
+                        f"FEEDBACK ON PREVIOUS ATTEMPT: {answer_feedback}\n\n"
+                        f"Please improve your answer based on this feedback."
+                    )
+                
+                answer_result = Runner.run_sync(conversation_agent, conversation_prompt)
+                answer = extract_agent_response(answer_result)
+                if not answer:
+                    answer = "I don't know."
+            except Exception as e:
+                print(f"Warning: Answer generation failed: {e}")
                 answer = "I don't know."
-    except Exception as e:
-        print(f"Warning: Answer generation failed: {e}")
-        answer = "I don't know."
-    
-    # Prepare sources list with checker flags
-    sources = [{"chunk_id": r["chunk_id"], "score": r["score"], "metadata": r.get("metadata")} for r in retrieved]
-    
-    # Ensure checker_response is available (should always be set, but handle edge case)
-    if checker_response is None:
-        checker_response = RetrieveCheckerResponse(
-            sufficiency=False,
-            correctness=False,
-            feedback="Checker response not available"
-        )
-    
-    sources_info = {
-        "sources": sources,
-        "checker_flags": checker_response.model_dump(),  # Convert Pydantic model to dict
-        "enhanced_query": enhanced_query,
-        "retrieval_attempts": min(attempt + 1, MAX_RETRIEVAL_TRIES)
-    }
-    return answer, json.dumps(sources_info, ensure_ascii=False, indent=2)
+            
+            # Step 6: Evaluate the answer
+            evaluator_response = evaluate_response(original_query, answer, retrieved)
+            
+            # Step 7: Check if answer is acceptable
+            if (evaluator_response.is_acceptable and 
+                evaluator_response.completeness and 
+                evaluator_response.accuracy and 
+                evaluator_response.proper_citation):
+                # All flags are true, answer is good
+                break
+            else:
+                # Flags are false, prepare feedback for retry
+                answer_feedback = evaluator_response.feedback or "Response needs improvement."
+                if answer_attempt < MAX_RETRIEVAL_TRIES - 1:
+                    print(f"Answer attempt {answer_attempt + 1} failed. Retrying with feedback: {answer_feedback}")
+                else:
+                    print(f"Max answer tries ({MAX_RETRIEVAL_TRIES}) reached. Using current answer.")
+        
+        # Ensure evaluator_response is available
+        if evaluator_response is None:
+            evaluator_response = EvaluatorResponse(
+                is_acceptable=False,
+                completeness=False,
+                accuracy=False,
+                proper_citation=False,
+                feedback="Evaluator response not available"
+            )
+        
+        # Prepare sources list with all metadata
+        sources = [{"chunk_id": r["chunk_id"], "score": r["score"], "metadata": r.get("metadata")} for r in retrieved]
+        sources_info = {
+            "sources": sources,
+            "checker_flags": checker_response.model_dump(),
+            "evaluator_flags": evaluator_response.model_dump(),
+            "enhanced_query": enhanced_query,
+            "retrieval_attempts": min(retrieval_attempt + 1, MAX_RETRIEVAL_TRIES),
+            "answer_attempts": min(answer_attempt + 1, MAX_RETRIEVAL_TRIES)
+        }
+        return answer, json.dumps(sources_info, ensure_ascii=False, indent=2)
 
-with gr.Blocks(title="Simple RAG Chat") as demo:
-    gr.Markdown("## Simple RAG Chat (FAISS retriever + OpenAI LLM)")
+with gr.Blocks(title="The Indian AI Lawyer") as demo:
+    gr.Markdown("## The Indian AI Lawyer")
     with gr.Row():
         with gr.Column(scale=3):
             query = gr.Textbox(label="Your question", placeholder="Ask about the constitution...", lines=3)
