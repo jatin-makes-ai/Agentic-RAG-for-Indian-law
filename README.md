@@ -18,12 +18,14 @@ This project implements an agentic RAG system that combines:
 3. **Quality Check** → Retrieve checker agent evaluates if chunks are sufficient and correct
 4. **Iterative Refinement** → If quality is insufficient, feedback is sent back to enhancer for retry (max 3 attempts)
 5. **Answer Generation** → Conversation agent generates final answer using validated chunks
+6. **Final Evaluator** → The Evaluator Agent checks for hallucination and completeness of the generated response and can decide to send for retries
 
 ### Agents
 
 - **Enhancer Agent**: Optimizes user queries for better semantic search results
 - **Retrieve Checker Agent**: Validates retrieval quality using Pydantic-structured output (sufficiency, correctness, feedback)
 - **Conversation Agent**: Generates concise, cited answers from retrieved context
+- **Evaluator Agent**: Evaluates the generated response to the user's query
 
 ## Features
 
@@ -33,6 +35,7 @@ This project implements an agentic RAG system that combines:
 - **Structured Output**: Pydantic models for type-safe agent responses
 - **Tracing**: OpenAI platform integration for monitoring LLM calls
 - **Web Interface**: Gradio-based UI for easy interaction
+- **Website Integration**: Currently working on integrating with a publically hosted website
 
 ## Project Structure
 
