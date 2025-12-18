@@ -35,8 +35,22 @@ def format_context(retrieved_chunks, max_context_chars=4000):
     for c in retrieved_chunks:
         txt = c.get("text", "") or ""
         meta = c.get("metadata", {}) or {}
-        header = f"CHUNK_ID: {c.get('chunk_id')} METADATA: {meta}"
-        part = header + "\n" + txt + "\n\n"
+        
+        # Format header with new CSV-based metadata structure
+        article_num = c.get('chunk_id') or meta.get('Article_Number', 'Unknown')
+        part_num = meta.get('Part_Number', '')
+        part_title = meta.get('Part_Title', '')
+        
+        # Build readable header
+        header_parts = [f"Article {article_num}"]
+        if part_num:
+            header_parts.append(f"Part {part_num}")
+        if part_title:
+            header_parts.append(f"({part_title})")
+        
+        header = " | ".join(header_parts)
+        
+        part = f"{header}\n{txt}\n\n"
         if total + len(part) > max_context_chars:
             # truncate remaining
             remain = max(0, max_context_chars - total)
@@ -202,16 +216,16 @@ def answer_query(user_query, top_k=5):
                 if answer_attempt == 0:
                     # First attempt: generate answer
                     conversation_prompt = (
-                        f"Use only the following retrieved chunks to answer. "
-                        f"Cite chunk ids in your answer when you reference them.\n\n"
-                        f"RETRIEVED_CHUNKS:\n{context}\n\nQUESTION: {original_query}"
+                        f"Use only the following retrieved articles from the Indian Constitution to answer. "
+                        f"Cite Article numbers (e.g., Article 15, Article 21) in your answer when you reference them.\n\n"
+                        f"RETRIEVED_ARTICLES:\n{context}\n\nQUESTION: {original_query}"
                     )
                 else:
                     # Retry: generate answer with feedback
                     conversation_prompt = (
-                        f"Use only the following retrieved chunks to answer. "
-                        f"Cite chunk ids in your answer when you reference them.\n\n"
-                        f"RETRIEVED_CHUNKS:\n{context}\n\n"
+                        f"Use only the following retrieved articles from the Indian Constitution to answer. "
+                        f"Cite Article numbers (e.g., Article 15, Article 21) in your answer when you reference them.\n\n"
+                        f"RETRIEVED_ARTICLES:\n{context}\n\n"
                         f"QUESTION: {original_query}\n\n"
                         f"FEEDBACK ON PREVIOUS ATTEMPT: {answer_feedback}\n\n"
                         f"Please improve your answer based on this feedback."

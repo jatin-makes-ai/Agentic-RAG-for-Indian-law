@@ -68,6 +68,7 @@ except Exception:
 from tqdm import tqdm
 import math
 import random
+import pandas as pd
 
 # -------------------------
 # Configuration / defaults
@@ -139,9 +140,9 @@ class OpenAIEmbeddingClient:
 # -------------------------
 # Core processing
 # -------------------------
-def stream_chunks(chunks_file: str):
+def stream_chunks_jsonl(chunks_file: str):
     """
-    Yield (chunk_id, chunk_text, metadata) for each item in the chunks jsonl.
+    Yield (chunk_id, chunk_text, metadata) for each item in a chunks JSONL file.
     Expects each json line to be a dict with at least chunk_id and text fields.
     """
     for rec in read_jsonl(chunks_file):
@@ -150,6 +151,50 @@ def stream_chunks(chunks_file: str):
         # metadata: keep everything except text and embedding if present
         metadata = {k: v for k, v in rec.items() if k not in ("text", "embedding")}
         yield chunk_id, text, metadata
+
+
+def stream_chunks_csv(csv_file: str):
+    """
+    Yield (chunk_id, chunk_text, metadata) for each row in a structured CSV.
+
+    Assumes the CSV has the following columns:
+      - Part_Number
+      - Part_Title
+      - Article_Number
+      - Article_Text
+
+    Each row (Article) becomes a single chunk.
+    - chunk_id: Article_Number (as string)
+    - text: Article_Text
+    - metadata: all other columns (including Part_Number, Part_Title, Article_Number)
+    """
+    df = pd.read_csv(csv_file)
+
+    required_cols = {"Article_Number", "Article_Text"}
+    missing = required_cols.difference(df.columns)
+    if missing:
+        raise ValueError(f"CSV is missing required columns: {missing}")
+
+    for _, row in df.iterrows():
+        chunk_id = str(row["Article_Number"])
+        text = str(row["Article_Text"])
+        # keep all other columns as metadata
+        metadata = {col: row[col] for col in df.columns if col not in ("Article_Text",)}
+        yield chunk_id, text, metadata
+
+
+def stream_chunks(chunks_file: str):
+    """
+    Dispatch to the appropriate chunk stream based on file extension.
+
+    - If chunks_file ends with .csv  -> interpret as structured article CSV
+    - Otherwise                      -> interpret as JSONL chunks (original behavior)
+    """
+    suffix = Path(chunks_file).suffix.lower()
+    if suffix == ".csv":
+        yield from stream_chunks_csv(chunks_file)
+    else:
+        yield from stream_chunks_jsonl(chunks_file)
 
 def dedupe_by_hash(items: Iterable[Tuple[str,str,dict]]) -> Tuple[List[Tuple[str,str,dict]], Dict[str,str]]:
     """
