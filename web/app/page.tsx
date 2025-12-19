@@ -2,39 +2,70 @@
 
 import { useState } from "react";
 
+interface Article {
+  article_number: string;
+  part_number?: string;
+  part_title?: string;
+  score: number;
+  distance: number;
+}
+
+interface ApiResponse {
+  answer: string;
+  articles: Article[];
+  enhanced_query?: string;
+  retrieval_attempts: number;
+  answer_attempts: number;
+  checker_flags?: any;
+  evaluator_flags?: any;
+}
+
 export default function Home() {
   const [scenario, setScenario] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [response, setResponse] = useState<string | null>(null);
+  const [articles, setArticles] = useState<Article[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleAnalyze = () => {
+  const API_ENDPOINT = process.env.NEXT_PUBLIC_API_ENDPOINT || "http://localhost:8000";
+
+  const handleAnalyze = async () => {
     if (!scenario.trim()) return;
     
     setIsAnalyzing(true);
-    // Simulate API call - replace with actual API call later
-    setTimeout(() => {
-      setResponse("Based on the Indian Constitution, your scenario involves fundamental rights protected under Article 19 (freedom of speech and expression) and Article 21 (protection of life and personal liberty). The specific application depends on the circumstances and any reasonable restrictions that may apply.");
-      setIsAnalyzing(false);
-    }, 2000);
-  };
+    setError(null);
+    setResponse(null);
+    setArticles([]);
+    
+    try {
+      const response = await fetch(`${API_ENDPOINT}/query`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: scenario,
+          min_score: 0.7,
+          max_results: 200,
+        }),
+      });
 
-  const sampleArticles = [
-    {
-      articleNumber: "Article 19",
-      title: "Protection of certain rights regarding freedom of speech, etc.",
-      text: "(1) All citizens shall have the right—\n(a) to freedom of speech and expression;\n(b) to assemble peaceably and without arms;\n(c) to form associations or unions or co-operative societies;\n(d) to move freely throughout the territory of India;\n(e) to reside and settle in any part of the territory of India; and\n(f) to practise any profession, or to carry on any occupation, trade or business."
-    },
-    {
-      articleNumber: "Article 21",
-      title: "Protection of life and personal liberty",
-      text: "No person shall be deprived of his life or personal liberty except according to procedure established by law."
-    },
-    {
-      articleNumber: "Article 21A",
-      title: "Right to education",
-      text: "The State shall provide free and compulsory education to all children of the age of six to fourteen years in such manner as the State may, by law, determine."
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: "Unknown error" }));
+        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+      }
+
+      const data: ApiResponse = await response.json();
+      setResponse(data.answer);
+      setArticles(data.articles || []);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to fetch response from API";
+      setError(errorMessage);
+      console.error("API Error:", err);
+    } finally {
+      setIsAnalyzing(false);
     }
-  ];
+  };
 
   return (
     <div className="min-h-screen bg-white">
@@ -118,6 +149,19 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Error Section */}
+        {error && (
+          <div className="bg-red-50 border-2 border-red-200 rounded-3xl card-soft-shadow p-8 mb-8">
+            <h2 className="text-2xl font-bold mb-4 text-red-800">Error</h2>
+            <p className="text-red-700 leading-relaxed">
+              {error}
+            </p>
+            <p className="text-red-600 text-sm mt-2">
+              Make sure the API server is running at {API_ENDPOINT}
+            </p>
+          </div>
+        )}
+
         {/* Response Section */}
         {response && (
           <div className="bg-white rounded-3xl card-soft-shadow p-8 mb-8 border border-slate-200">
@@ -130,32 +174,47 @@ export default function Home() {
           </div>
         )}
 
-        {/* Sample Articles Section */}
-        <div className="space-y-6">
-          <h2 className="text-3xl font-bold text-center maroon-texture-text mb-8">
-            Referenced Articles
-          </h2>
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {sampleArticles.map((article, index) => (
-              <div
-                key={index}
-                className="bg-white rounded-2xl card-soft-shadow p-6 border border-slate-200 hover:shadow-xl transition-shadow duration-200"
-              >
-                <div className="mb-4">
-                  <h3 className="text-sm font-semibold uppercase tracking-wide maroon-texture-text mb-1">
-                    {article.articleNumber}
-                  </h3>
-                  <h4 className="text-lg font-semibold text-slate-800 mb-3">
-                    {article.title}
-                  </h4>
+        {/* Referenced Articles Section */}
+        {articles.length > 0 && (
+          <div className="space-y-6">
+            <h2 className="text-3xl font-bold text-center maroon-texture-text mb-8">
+              Referenced Articles ({articles.length})
+            </h2>
+            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+              {articles.map((article, index) => (
+                <div
+                  key={index}
+                  className="bg-white rounded-2xl card-soft-shadow p-6 border border-slate-200 hover:shadow-xl transition-shadow duration-200"
+                >
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="text-sm font-semibold uppercase tracking-wide maroon-texture-text">
+                        Article {article.article_number}
+                      </h3>
+                      <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded">
+                        {(article.score * 100).toFixed(0)}% match
+                      </span>
+                    </div>
+                    {article.part_number && (
+                      <p className="text-xs text-slate-500 mb-1">
+                        Part {article.part_number}
+                        {article.part_title && ` - ${article.part_title}`}
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-slate-600 text-sm">
+                    <p className="font-medium text-slate-800 mb-2">
+                      Relevance Score: {(article.score * 100).toFixed(1)}%
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      This article was referenced in the analysis above.
+                    </p>
+                  </div>
                 </div>
-                <p className="text-slate-600 text-sm leading-relaxed whitespace-pre-line">
-                  {article.text}
-                </p>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Footer Note */}
         <div className="mt-12 text-center text-slate-500 text-sm">

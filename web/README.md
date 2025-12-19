@@ -2,6 +2,21 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
+### Environment Setup
+
+1. Create a `.env.local` file in the `web` directory:
+```bash
+# API Endpoint for the FastAPI backend
+NEXT_PUBLIC_API_ENDPOINT=http://localhost:8000
+```
+
+2. Make sure the FastAPI backend is running (see main project README):
+```bash
+python main_api.py
+```
+
+### Running the Development Server
+
 First, run the development server:
 
 ```bash

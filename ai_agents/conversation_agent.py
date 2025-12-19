@@ -8,10 +8,8 @@ import os
 load_dotenv()
 
 prompt = """
-You are a legal assistant. Answer concisely and cite the chunk_ids used.
-If the answer cannot be found in the provided context, say "I don't know".
-Use only the retrieved chunks provided to you to answer the question.
-Cite chunk ids in your answer when you reference them.
+You are a legal assistant. You will be provided a scenario as well as some relevant articles from the constitution of India that may be applicable in that scenario.
+Your job is to answer the user's query/scenario based on the interpretation of the exact articles, citing the Articles wherever you use them.
 """
 
 conversation_agent = Agent(

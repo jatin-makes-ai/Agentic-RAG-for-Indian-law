@@ -7,3 +7,6 @@ openai
 gradio
 numpy
 openai-agents
+fastapi
+uvicorn[standard]
+pydantic

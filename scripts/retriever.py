@@ -119,6 +119,47 @@ class Retriever:
                 results.append({"chunk_id": chunk_id, "score": score, "distance": dist, "text": rec.get("text",""), "metadata": rec.get("metadata",{})})
         return results
 
+    def retrieve_by_threshold(self, query: str, min_score: float, max_results: int = 200) -> List[Dict]:
+        """
+        Retrieve all chunks above a score threshold.
+        For FAISS: searches up to max_results, then filters by threshold.
+        For linear scan: calculates all distances, filters by threshold, sorts by score.
+        """
+        q_emb = np.array(embed_query(query), dtype="float32").reshape(1, -1)
+        results = []
+        
+        if self.index is not None:
+            # FAISS: search with high top_k, then filter by threshold
+            D, I = self.index.search(q_emb, max_results)
+            dists = D[0]
+            ids = I[0]
+            for dist, iid in zip(dists, ids):
+                if iid < 0:
+                    continue
+                chunk_id = None
+                if self.id_map:
+                    chunk_id = self.id_map[iid] if iid < len(self.id_map) else None
+                else:
+                    chunk_id = self.ordered_ids[iid] if iid < len(self.ordered_ids) else None
+                rec = self.id_to_rec.get(chunk_id, {})
+                score = l2_to_score(dist)
+                if score >= min_score:
+                    results.append({"chunk_id": chunk_id, "score": score, "distance": float(dist), "text": rec.get("text",""), "metadata": rec.get("metadata",{})})
+        else:
+            # Linear scan: calculate all distances, filter by threshold
+            dif = self.emb_matrix - q_emb
+            dists = np.sum(dif * dif, axis=1)
+            for idx, dist in enumerate(dists):
+                chunk_id = self.ordered_ids[idx]
+                rec = self.id_to_rec.get(chunk_id, {})
+                score = l2_to_score(float(dist))
+                if score >= min_score:
+                    results.append({"chunk_id": chunk_id, "score": score, "distance": float(dist), "text": rec.get("text",""), "metadata": rec.get("metadata",{})})
+        
+        # Sort by score (descending) and return
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results
+
 # CLI
 def main():
     p = argparse.ArgumentParser()

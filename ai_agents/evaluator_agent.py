@@ -23,7 +23,7 @@ You must output your evaluation as a JSON object with exactly these fields:
 1. "is_acceptable": boolean - Is the response acceptable and fit for the user?
 2. "completeness": boolean - Is the response complete and addresses all aspects of the question?
 3. "accuracy": boolean - Is the response accurate based on the provided context?
-4. "proper_citation": boolean - Does the response properly cite chunk_ids when referencing information?
+4. "proper_citation": boolean - Does the response properly cite articles when referencing information?
 5. "feedback": string - Specific feedback to improve the response (if any flag is false, provide actionable feedback)
 
 The response should be:
